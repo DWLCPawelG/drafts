@@ -1,30 +1,27 @@
-from qalibs.eapi_request import EapiRequests
-import logging.config
-import os
+import logging
 from configparser import ConfigParser
 from time import sleep
-import logging
+
+import pytest
 from interruptingcow import timeout
-from geic.smoke import TestGEICAgentPM
+from qalibs.eapi_request import EapiRequests
 from qalibs.eapi_request.airsync_api.devices import GeICNode
 from qalibs.eapi_request.utils import find_asdid_by_did
-from qalibs.ssh_request import GeICDocker, SSHRequest
-from qalibs.eapi_request.airsync_api.templates import AirSyncTemplate, AirSyncBlob
-import pytest
-import yaml
-import arrow
-from qalibs.eapi_request import EapiRequests
-from qalibs.eapi_request.airsync_api.group_operations import AirSyncTask, AirSyncGroupOperation
+from qalibs.ssh_request import GeICDocker
+
+from .helpers.containers_manager import GeICAgentContainers
 
 pytest_plugins = ['qalibs.pytest_plugins.common_logger.testcase_logging',
                   'qalibs.pytest_plugins.common_logger.class_logging']
 logger = logging.getLogger(__name__)
+
 
 # @pytest.fixture(scope='session')
 def config_parser():
     config = ConfigParser()
     config.read('test_environment.ini')
     return config
+
 
 # @pytest.fixture(scope='session')
 def config(config_parser):
@@ -41,6 +38,7 @@ def config(config_parser):
         sections_dict[section] = temp_dict
 
     return sections_dict
+
 
 # @pytest.fixture(scope='session')
 def eapi(config):
@@ -109,4 +107,13 @@ def eapi_node(request, config, eapi, docker_node):
     assert eapi_node.is_valid(), f"Precondition failed, eapi_node is not valid"
     return eapi_node
 
+
 container = docker_node(config=config_parser(), eapi=eapi(config_parser()))
+
+
+# OR
+def device_for_group_operations_unregistrations(eapi, config):
+    with GeICAgentContainers.create_containers(count=1, eapi=eapi, config=config) as node:
+        with GeICAgentContainers.create_eapi_nodes(eapi=eapi, nodes=node) as eapi_node:
+            print(eapi_node)
+            return eapi_node
