@@ -15,5 +15,5 @@ assertion = AirSyncAssertion.create_assertion(eapi=eapi, subject=f"devices/{node
 
 # mutlitple assertions:
 subject = f"$devices/{node.asdid}"
-assertions = AirSyncAssertion.create_assertions(eapi, assertions=[(subject, "$attributes/longitude", "19.0308559238844"),
-                                                                  (subject, "$attributes/latitude", "50.261815")])
+assertions = AirSyncAssertion.create_assertions(eapi, assertions=[(subject, "attributes/lunch", "burgers"),
+                                                                  (subject, "attributes/breakfast", "cereal")])
