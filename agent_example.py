@@ -1,7 +1,7 @@
 """Example of using new architecture for Agent orchestration."""
 
 from time import sleep
-from qalibs.agent import GeICAgentController, GeICGWAAgentController, create_dockerized_manager, AgentParameters
+from qalibs.agent.geic import GeICAgentController, GeICGWAAgentController, create_dockerized_manager, AgentParameters
 from qalibs.eapi_request.utils import find_did_by_asdid
 from qalibs.eapi_request import EapiRequests
 
