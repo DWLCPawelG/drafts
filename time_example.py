@@ -1,4 +1,5 @@
 import datetime
+import time
 """HOW ABOUT `arrow` module? (from arrow import Arrow)"""
 
 
@@ -50,5 +51,11 @@ print(moon_landing_datetime)
 
 
 now = datetime.datetime.today()
-now_ts = datetime.time(now)
+now_ts = time.time()
 print(now_ts)
+print(datetime.datetime.now(tz=None))
+now = time.time() *1000
+hour_berfore = int(now - 3600)
+print(now)
+print(int(now))
+print(hour_berfore)
