@@ -1,0 +1,193 @@
+pipeline {
+    agent {
+        label "${agent_label}"
+    }
+    parameters {
+        string(name: 'agent_label', defaultValue: "main", description: 'Label of agent, eg. main, main2, master')
+        choice(name: 'setup', choices: ['geic-qa', 'geic-qa2', 'geic-qa3', 'geic-qa4', 'geic-ref', 'geic-sandbox', 'geic-test', 'pdm-qa', 'pdm-ref', 'pdm-sandbox', 'k8s-geic-perf-ref','k8s-pdm-sandbox'], description: 'setup as defined in qalibs oauth.yml')
+        string(name: 'tenant_id', defaultValue: "1", description: 'Tenant id from oauth.yml')
+//         string(defaultValue: "2.0.22", description: 'GEIC GWA agent version, e.g. 2.0.22, Agent docker image must be available in the system', name: 'agent_version') # TODO: decide on how to handle agent_version parameter
+        booleanParam(name: 'report_test_run', defaultValue: false, description: 'Whether test run results are to be reported to TestRail')
+        string(name: 'test_rail_milestone', defaultValue: "30", description: 'Milestone number, see: https://relayr102.testrail.net/index.php?/milestones/overview/4')
+        string(name: 'test_run_id', defaultValue: "0", description: 'Testrail existing run id, if set to 0 new run will be created.')
+        booleanParam(name: 'Agent', defaultValue: true, description: 'Agent tests')
+        booleanParam(name: 'Cloud', defaultValue: true, description: 'Cloud tests')
+        booleanParam(name: 'PackageManagement', defaultValue: true, description: 'Package Management tests')
+        string(name: 'smoke_branch', defaultValue: "*/master", description: 'Branch of pdm-qa-tests repository from which smoke tests are running')
+        string(name: 'agent_host', defaultValue: "10.10.10.201", description: 'IP address of VM for hosting agent containers')
+        string(name: 'ssh_port', defaultValue: "22", description: 'ssh port to connect with agent host')
+        string(name: 'user_name', defaultValue: "root", description: 'user name used for ssh connection to agent host')
+        booleanParam(name: 'report_slack', defaultValue: true, description: 'Whether test run results are reported on slack channel')
+    }
+    stages {
+        stage('Preparation') {
+            steps {
+                git 'git@github.com:relayr/pdm-qa-tests.git'
+                checkout([$class: 'GitSCM', branches: [[name: "${smoke_branch}"]], userRemoteConfigs: [[url: 'git@github.com:relayr/pdm-qa-tests.git']]])
+                script {
+                    def exists = fileExists 'test_environment.ini'
+                    if (exists) {
+                        sh 'echo file exists'
+                        sh 'rm test_environment.ini'
+                    }
+                    writeFile file: "test_environment.ini",
+                        text: """[Setup]
+                            setup = ${setup}
+                            tenant = ${tenant_id}
+
+                            [AgentDevice]
+                            device_type = GEICGWADocker
+                            prefix = smoke
+                            agent_type = geicgwaagent
+                            image_tag = 1
+                            pkg_result_file_timeout = 90
+                            component_interval = 30
+                            sync_msg_interval = 30
+                            log_path = /root/pdm-qa-isap-gwa/logs
+
+                            [ServerDevice]
+                            asdid = create
+
+                            [Docker]
+                            host = $(agent_host)
+                            port = 2376
+                            expected_registration_time = 40
+                            expected_container_startup_time = 60
+
+                            [TestRail]
+                            report_test_run = ${report_test_run}
+                            close_test_run = false
+                            project = 4
+                            milestone = ${test_rail_milestone}
+                            suite = 230
+                            test_run_id = ${test_run_id}
+
+                            [SSHRequest]
+                            host = ${agent_host}
+                            username = ${user_name}
+                            password = ${password}
+                            port = ${ssh_port}"""
+
+                    withPythonEnv('python3.6') {
+                        sh 'python --version'
+                        sh 'pip install -r requirements_ssh.txt --upgrade'
+                    }
+                }
+            }
+        }
+        stage('Smoke Tests') {
+            parallel {
+                stage('Cloud'){
+                    when{
+                        expression {params.Cloud}
+                    }
+                    steps{
+                        catchError(buildResult: 'UNSTABLE', message: 'Cloud section failed - see logs for details', stageResult: 'FAILURE') {
+                            withPythonEnv('python3.6') {
+                                withEnv(["TESTRAIL_USER_EMAIL=${TR_mail}",
+                                        "TESTRAIL_USER_KEY=${TR_user_key}",
+                                        "TESTRAIL_URL=${TR_url}",
+                                        "TESTRAIL_VERIFY_SSL=${TR_verify_ssl}"]) {
+                                    sh """pytest -s  geic/smoke_v2/test_cloud_smoke.py --junit-xml=${WORKSPACE}/resultCloudSmoke.xml --disable-pytest-warnings"""
+                                }
+                            }
+                            echo 'Cloud tests passed'
+                        }
+                    }
+                }
+                stage('Agent'){
+                    when{
+                        expression {params.Agent}
+                    }
+                    steps{
+                        catchError(buildResult: 'UNSTABLE', message: 'Agent section failed - see logs for details', stageResult: 'FAILURE') {
+                            withPythonEnv('python3.6') {
+                                withEnv(["TESTRAIL_USER_EMAIL=${TR_mail}",
+                                        "TESTRAIL_USER_KEY=${TR_user_key}",
+                                        "TESTRAIL_URL=${TR_url}",
+                                        "TESTRAIL_VERIFY_SSL=${TR_verify_ssl}"]) {
+                                    sh """pytest -s  geic/smoke_v2/test_agent_smoke.py --junit-xml=${WORKSPACE}/resultAgentSmoke.xml --disable-pytest-warnings"""
+                                }
+                            }
+                            echo 'Agent tests passed'
+                        }
+                    }
+                }
+                stage('Package Management'){
+                    when{
+                        expression {params.PackageManagement}
+                    }
+                    steps{
+                        catchError(buildResult: 'UNSTABLE', message: 'Package Management section failed - see logs for details', stageResult: 'FAILURE') {
+                            withPythonEnv('python3.6') {
+                                withEnv(["TESTRAIL_USER_EMAIL=${TR_mail}",
+                                        "TESTRAIL_USER_KEY=${TR_user_key}",
+                                        "TESTRAIL_URL=${TR_url}",
+                                        "TESTRAIL_VERIFY_SSL=${TR_verify_ssl}"]) {
+                                    sh """pytest -s  geic/smoke_v2/test_package_management_smoke.py --junit-xml=${WORKSPACE}/resultPackageManagementSmoke.xml --disable-pytest-warnings"""
+                                }
+                            }
+                            echo 'Package Management tests passed'
+                        }
+                    }
+                }
+			}
+		}
+	}
+    post{
+        always {
+            script {
+                 junit '*.xml'
+                 if ("${setup}" == 'geic-ref')
+                 {
+                     emailext (
+                        subject: '${setup} - $DEFAULT_SUBJECT',
+                        mimeType: 'text/html',
+                        body: '''<h4>SETUP: ${setup} <br> </h4> ${SCRIPT, template="groovy-html.template"}''',
+                        to: '${emails}'
+                     )
+                 }
+                 archiveArtifacts artifacts: """result_geic_smoke.xml""", fingerprint: true
+            }
+        }
+        success{
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "relayr",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "good",
+                        message: "Finished ${env.JOB_NAME}, build ${env.BUILD_NUMBER} on ${setup} with result: ${currentBuild.result}. \n For more information go to: ${env.BUILD_URL} \n\"Smoke Tests passed.\""
+                    )
+                }
+            }
+        }
+        failure {
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "relayr",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "danger",
+                        message: "Finished ${env.JOB_NAME}, build ${env.BUILD_NUMBER} on ${setup} with result: ${currentBuild.result}. \n For more information go to: ${env.BUILD_URL} \n\"Smoke Tests failed.\""
+                    )
+                }
+            }
+        }
+        unstable {
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "relayr",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        message: "Finished ${env.JOB_NAME}, build ${env.BUILD_NUMBER} on ${setup} with result: ${currentBuild.result}. \n For more information go to: ${env.BUILD_URL} \n\"Something is wrong\"",
+                        color: "#E9CC29"
+                    )
+                }
+            }
+        }
+    }
+}

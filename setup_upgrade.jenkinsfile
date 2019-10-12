@@ -1,0 +1,160 @@
+/*
+This Jenkinsfile is used in all Setup Upgrade jobs.
+In Jenkins job you have to define following parameters:
+- setup
+- host_ip
+- branch (pdm-builds repository)
+- config_branch (pdm-build-deployer-config repository) - when geic-qa4.yml will be merged to master, we can move this parameter into Jenkinsfile
+- remote_user
+- remote_password
+
+Rest of the parameters is defined in this Jenkinsfile
+*/
+
+def remote = [:]
+  remote.name = "${setup}"
+  remote.host = "${host_ip}"
+  remote.user = "${remote_user}"
+  remote.password = "${remote_password}"
+  remote.allowAnyHosts = true
+
+def slack_team_domain = "relayr"
+def slack_token = "4P6iwfhLVk3rO9EKKRmfnhkJ"
+def slack_channel = "#ktw-qa-geic"
+
+
+pipeline {
+    agent {
+        label "${agent_label}"
+    }
+    options {
+        timeout(time: 1, unit: 'HOURS')
+    }
+    parameters {
+        string(defaultValue: "main", description: 'Label of agent, eg. main, main2, master', name: 'agent_label')
+        string(defaultValue: "1", description: 'Tenant id from oauth.cfg', name: 'tenant_id')
+        string(defaultValue: "1.0.34", description: 'GEIC agent version, e.g. 1.0.34. Agent docker image must be available in the system.', name: 'agent_version')
+        choice(choices: ['false', 'true'], description: 'Whether test run results are to be reported to TestRail', name: 'report_test_run')
+        string(defaultValue: "30", description: 'Milestone number, see: https://relayr102.testrail.net/index.php?/milestones/overview/4', name: 'test_rail_milestone')
+        string(defaultValue: "0", description: 'Testrail existing run id, if set to 0 new run will be created.', name: 'test_run_id')
+        choice(choices: ['false', 'true'], description: 'This parameter allows to clean databases (exception: kafka is set always on true)', name: 'clean_volume')
+        string(defaultValue: "*/master", description: 'Branch of pdm-qa-test repository from which smoke tests are running', name: 'smoke_branch')
+        booleanParam(name: 'report_slack', defaultValue: true, description: 'Whether upgrade & smoke results are reported on slack channel')
+    }
+    stages {
+        stage('Preparation') {
+            steps {
+                script {
+                    if (report_slack == 'true') {
+                        slackSend (
+                            teamDomain: "${slack_team_domain}",
+                            token: "${slack_token}",
+                            channel: "${slack_channel}",
+                            color: "good",
+                            message: "Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} on setup ${setup} has begun. Check console output: ${env.BUILD_URL} \n\"This may take a while, have a cup of :coffee: \""
+                        )
+                    }
+                }
+                sshCommand remote: remote, command: """pushd /root/pdm-builds && git stash && git pull && git checkout --force ${branch} && popd"""
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy && git stash && git pull && git checkout master && popd"""
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy/pdm-builds-deployer-config && git stash && git pull && git checkout ${config_branch} && popd"""
+                writeFile file: 'check_config.sh', text: """pushd /root/pdm-deploy/conf && [ -f /root/pdm-deploy/conf/${setup}.yml ] || ln -s /root/pdm-deploy/pdm-builds-deployer-config/configs/cf2docker/${setup}.yml && popd"""
+                writeFile file: 'check_limits.sh', text: """pushd /root/pdm-deploy/conf && [ -f /root/pdm-deploy/conf/limits-qa-geic.yml ] || ln -s /root/pdm-deploy/pdm-builds-deployer-config/configs/cf2docker/limits-qa-geic.yml && popd"""
+                sshScript remote: remote, script: "check_config.sh"
+                sshScript remote: remote, script: "check_limits.sh"
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy/conf && sed --in-place --follow-symlinks '/^ *kafka:/,/^ *[^:]*:/s/clean_volume: .*/clean_volume: true/' ${setup}.yml && popd"""
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy/conf && sed --in-place --follow-symlinks '/^ *default:/,/^ *[^:]*:/s/clean_volume: .*/clean_volume: ${clean_volume}/' ${setup}.yml && popd"""
+            }
+        }
+        stage('Deploy PDM') {
+            options {
+                retry(1)
+            }
+            steps {
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy && ./bin/cli.py -s ${setup} stop && popd"""
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy && ./bin/cli.py -s ${setup} services && popd"""
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy && ./bin/cli.py -s ${setup} push && popd"""
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy && ./bin/cli.py -s ${setup} start && popd"""
+            }
+        }
+        stage('Clean configuration file') {
+            steps {
+                sshCommand remote: remote, command: """pushd /root/pdm-deploy/conf && sed -r --in-place --follow-symlinks "s/^(\\s*)(clean_volume\\s*:\\s*.*\\s*\$)/\\1clean_volume: false/" ${setup}.yml && popd"""
+                sleep(time:5, unit:"MINUTES")
+            }
+        }
+        stage ('Run Smoke Tests') {
+            steps {
+                script {
+                    try {
+                        build job: 'GEIC_Smoke_Test',
+                        parameters: [
+                            string(name: 'agent_label', value: "${agent_label}"),
+                            string(name: 'setup', value: "${setup}"),
+                            string(name: 'agent_version', value: "${agent_version}"),
+                            string(name: 'test_rail_milestone', value: "${test_rail_milestone}"),
+                            string(name: 'report_test_run', value: "${report_test_run}"),
+                            string(name: 'test_run_id', value: "${test_run_id}"),
+                            string(name: 'tenant_id', value: "${tenant_id}"),
+                            string(name: 'smoke_branch', value: "${smoke_branch}"),
+                            booleanParam(name: 'report_slack', value: "${report_slack}"),
+                            string(name: 'slack_channel', value: "${slack_channel}"),
+                            string(name: 'slack_token', value: "${slack_token}"),
+                            [$class: 'BooleanParameterValue', name: 'test_suite_agent', value: 'true'],
+                            [$class: 'BooleanParameterValue', name: 'test_suite_server', value: 'true'],
+                            [$class: 'BooleanParameterValue', name: 'test_suite_package_management', value: 'true']
+                        ],
+                        propagate: true,
+                        wait: true
+                        currentBuild.result='SUCCESS'
+                    }
+                    catch(err) {
+                        currentBuild.result="UNSTABLE"
+                        echo 'Smoke Tests ended with result: "${currentBuild.result}". See logs.'
+                    }
+                }
+            }
+        }
+    }
+    post{
+        success {
+            script {
+                if (report_slack == 'true') {
+                    slackSend (
+                        teamDomain: "${slack_team_domain}",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "good",
+                        message: "Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} on setup ${setup} ended with result: ${currentBuild.result}. Check console output: ${env.BUILD_URL} \n\"Work, work.\""
+                    )
+		        }
+		    }
+		}
+        failure {
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "${slack_team_domain}",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "danger",
+                        message: "Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} on setup ${setup} ended with result: ${currentBuild.result}. Check console output: ${env.BUILD_URL} \n\"Whaaat?\""
+                    )
+                }
+            }
+        }
+        unstable {
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "${slack_team_domain}",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        message: "Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} on setup ${setup} ended with result: ${currentBuild.result}. Check console output: ${env.BUILD_URL} \n\"Something need doing?\"",
+                        color: "#E9CC29"
+                    )
+                }
+            }
+        }
+    }
+}

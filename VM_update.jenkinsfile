@@ -1,0 +1,149 @@
+/*
+This is a Jenkinsfile for 3 simultaneous upgrades on 2 virtual machines:
+    - rebuild Agent 1.0.34 image on 10.10.11.151 (Jenkins)
+    - upgrade Agent 2.0 image to latest version using isap_manager.py on 10.10.11.151 (Jenkins)
+    - rebuild QA Manager on 10.10.11.151
+    - rebuild Agent 1.0.34 image on 10.10.10.201 (GEIC Agent VM)
+    - upgrade Agent 2.0 image to latest version using isap_manager.py on 10.10.10.201 (GEIC Agent VM)
+
+Before job you can specify which upgrades to perform
+as well as pdm-qa-libs branch from which changes will be applied.
+You also can decide it there's a slack notification sent to #ktw-qa-pdm channel
+when job's finished with the result.
+*/
+
+
+def agent_vm = [:]
+    agent_vm.name = "GEIC Agent VM"
+    agent_vm.host = "10.10.10.201"
+    agent_vm.user = "${agent_vm_user}"
+    agent_vm.password = "${agent_vm_password}"
+    agent_vm.allowAnyHosts = true
+
+def qa_server = [:]
+    qa_server.name = "QA Server"
+    qa_server.host = "10.10.11.151"
+    qa_server.user = "${qa_server_user}"
+    qa_server.password = "${qa_server_password}"
+    qa_server.allowAnyHosts = true
+
+def slack_team_domain = "relayr"
+def slack_token = "kgtwhSlCTKDi7gieoNNu415M"
+def slack_channel = "#ktw-qa-pdm"
+
+pipeline {
+    agent {
+        label "${agent_label}"
+    }
+    parameters {
+        string(name: 'agent_label', defaultValue: "main", description: 'Label of agent, eg. main, main2, master')
+        string(name: 'pdm_qa_libs_branch', defaultValue: "master", description: 'Branch of pdm-qa-libs from which update should be performed')
+        booleanParam(name: 'agent_images_on_GEIC_agents_VM', defaultValue: true, description: 'Toggle on if you want rebuild agent images 10.10.10.201')
+        booleanParam(name: 'agent_images_on_Jenkins', defaultValue: true, description: 'Toggle on if you want rebuild agent images on 10.10.11.151')
+        booleanParam(name: 'qa_manager', defaultValue: true, description: 'Toggle on if you want rebuild QA Manager on 10.10.11.151')
+        string(name: 'agent_version', defaultValue: "latest", description: 'agent_version you want to build (e.g. \'version 2.0.20\' or \'latest\')')
+        booleanParam(name: 'report_slack', defaultValue: true, description: 'Choose whether to publish job result on slack')
+        string(name: 'slack_channel', defaultValue: "#ktw-qa-pdm", description: 'Slack channel name')
+        string(name: 'slack_token', defaultValue: "kgtwhSlCTKDi7gieoNNu415M", description: 'Slack channel token')
+    }
+    stages{
+        stage('VM Update') {
+			parallel {
+                stage('Rebuild Agent Images on Jenkins'){
+                    when{
+                        expression {params.agent_images_on_Jenkins}
+                    }
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'Rebuilding Agent Images on 10.10.11.151 failed.') {
+                            script {
+                                sshCommand remote: qa_server, command: """pushd /root/pdm-qa-isap/pdm-qa-libs && git stash && git checkout master && git pull && popd"""
+                                sshCommand remote: qa_server, command: """pushd /root/pdm-qa-isap && ./build.sh 1.0.34 && popd"""
+                                sshCommand remote: qa_server, command: """pushd /root/pdm-qa-isap-gwa && pip install --upgrade pip && pip3.6 install git+ssh://git@github.com/relayr/pdm-qa-libs.git@master#egg=qalibs -U && popd"""
+                                sshCommand remote: qa_server, command: """pushd /root/pdm-qa-isap-gwa && git stash && git checkout geic_gwa_2 && git pull && python3.6 isap_manager.py upgrade_agent ${agent_version} && popd"""
+                                echo 'Agent Images on 10.10.11.151 updated successfully.'
+                                sshCommand remote: qa_server, command: """docker image prune --all --force --filter \"until=72h\""""
+                                echo 'Dangling docker images have been removed.'
+                                sshCommand remote: qa_server, command: """pushd /root/pdm-qa-isap-gwa/logs && rm -rf * && popd"""
+                                echo 'Old agent logs have been removed.'
+                            }
+                        }
+                    }
+                }
+                stage('Rebuild QA Manager'){
+                    when{
+                        expression {params.qa_manager}
+                    }
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'Rebuilding QA Manager failed.') {
+                            script {
+                                sshCommand remote: qa_server, command: """pushd /home/pdm-qa-serverpython && ./build.sh && popd"""
+                                echo 'QA Manager redeployed successfully.'
+                            }
+                        }
+                    }
+                }
+                stage('Rebuild Agent Images on GEIC Agents VM') {
+                    when {
+                        expression {params.agent_images_on_GEIC_agents_VM}
+                    }
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE', message: 'Rebuilding Agent Images on 10.10.10.201 failed.') {
+                            script {
+                                sshCommand remote: agent_vm, command: """pushd /root/pdm-qa-isap/pdm-qa-libs && git stash && git checkout master && git pull && popd"""
+                                sshCommand remote: agent_vm, command: """pushd /root/pdm-qa-isap && ./build.sh 1.0.34 && popd"""
+                                sshCommand remote: agent_vm, command: """pushd /root/pdm-qa-isap-gwa && pip install --upgrade pip && pip3.6 install git+ssh://git@github.com/relayr/pdm-qa-libs.git@master#egg=qalibs -U && popd"""
+                                sshCommand remote: agent_vm, command: """pushd /root/pdm-qa-isap-gwa && git stash && git checkout geic_gwa_2 && git pull && python3.6 isap_manager.py upgrade_agent ${agent_version} && popd"""
+                                echo 'Agent Images on 10.10.10.201 updated successfully.'
+                                sshCommand remote: agent_vm, command: """docker image prune --all --force --filter \"until=72h\""""
+                                echo 'Dangling docker images have been removed.'
+                                sshCommand remote: agent_vm, command: """pushd /root/pdm-qa-isap-gwa/logs && rm -rf * && popd"""
+                                echo 'Old agent logs have been removed.'
+                            }
+                        }
+                    }
+                }
+			}
+        }
+    }
+    post{
+        success {
+            script {
+                if (report_slack == 'true') {
+                    slackSend (
+                        teamDomain: "${slack_team_domain}",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "good",
+                        message: """Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} ended with result: ${currentBuild.result}. Check console output: ${env.BUILD_URL} \n\"It's all hunky-dory.\""""
+                    )
+                }
+            }
+        }
+        failure {
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "${slack_team_domain}",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "danger",
+                        message: """Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} ended with result: ${currentBuild.result}. Check console output: ${env.BUILD_URL} \n\"That can't be good...\""""
+                    )
+                }
+            }
+        }
+        unstable {
+            script {
+                if (report_slack == 'true') {
+                    slackSend(
+                        teamDomain: "${slack_team_domain}",
+                        token: "${slack_token}",
+                        channel: "${slack_channel}",
+                        color: "#E9CC29",
+                        message: """Job '${env.JOB_NAME}', build ${env.BUILD_NUMBER} ended with result: ${currentBuild.result}. Check console output: ${env.BUILD_URL} \n\"Uuum... something's messed up.\""""
+                    )
+                }
+            }
+        }
+    }
+}
