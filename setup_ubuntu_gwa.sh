@@ -36,7 +36,7 @@ sed -i "s/18080/$HTTPGW_PORT/g" /root/geic-gwa/gwa-pdm-cloud-adapter-config.json
 sed -i "s/\"use_secure_conn\":\"no\"/\"use_secure_conn\":\"yes\"/g" /root/geic-gwa/gwa-pdm-cloud-adapter-config.json
 
 read -p "uaa_url: " UAA_URL
-sed -i "s/uaageic-stage.proximetry.com/$UAA_URL/g" /root/geic-gwa/geic-gwa-pdm-cloud-adapter-config.json
+sed -i "s/uaageic-stage.proximetry.com/$UAA_URL/g" /root/geic-gwa/gwa-pdm-cloud-adapter-config.json
 sed -i "s/uaageic-stage.proximetry.com/$UAA_URL/g" /root/geic-gwa/geic-gwa-health-status-adapter-config.json
 
 read -p "uaa_user: " UAA_USER
@@ -56,7 +56,7 @@ echo
 
 # Step 4: install agent using script: install.sh (it will create /opt/relayr directory and "root" user & group in system)
 # Core, Cloud Adapter and Package Manager should install correctly, only Health Status Adapter will not (that's expected as several important directories are missing). Agent can't run without HSA.
-./root/geic-gwa/install.sh
+pushd /root/geic-gwa && ./install.sh && popd
 
 
 # Step 5: create neccessary folders
@@ -73,7 +73,7 @@ mkdir -p /var/log/isap_logs \
 
 # Step 6: change ownership of /opt/relayr directory
 chown prox:prox -R /opt/relayr
-
+echo
 
 # Step 7: configure SSH Daemon on Agent host
 apt update && apt install openssh-server --yes
@@ -81,7 +81,7 @@ echo "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAjHr5zCD5U0xChCQOK7sIpQzdNamt6QPMLg9DoX
 
 
 # Step 8: Restart Health Status Adapter
-systemctl restart relayr-geic-gwa-health-status-adapter.service
-
+systemctl restart relayr-*
+echo ---------------------------------------------------------------------------------------------------
 echo "Your Agent should be up & running within a couple of seconds and Reachable in a couple of minutes. Have a nice day!"
 
