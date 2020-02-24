@@ -1,3 +1,4 @@
+textstat
 haralyzer
 numpy
 hbmqtt
