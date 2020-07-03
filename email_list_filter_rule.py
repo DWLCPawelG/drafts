@@ -7,7 +7,7 @@ from qalibs.eapi_request.airsync_api.templates import AirSyncTemplate, AirSyncBl
 
 tenant = 1  # ["prox_admin", "prox2_admin", "prox3_admin"]
 #eapi = EapiRequests.file('geic-sandbox', tenant=tenant, user='prox2_admin', password='P@ssw0rd')
-eapi = EapiRequests.file('geic-qa3', tenant=tenant)
+eapi = EapiRequests.file('geic-support', tenant=tenant)
 
 email = GEICEmailListFactory()
 email_list = email.create_or_update(eapi=eapi)

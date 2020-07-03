@@ -5,10 +5,10 @@ from qalibs.eapi_request.airsync_api.templates import AirSyncTemplate, AirSyncBl
 
 tenant = 1  # ["prox_admin", "prox2_admin", "prox3_admin"]
 #eapi = EapiRequests.file('geic-sandbox', tenant=tenant, user='prox2_admin', password='P@ssw0rd')
-eapi = EapiRequests.file('geic-qa4', tenant=tenant)
+eapi = EapiRequests.file('geic-support', tenant=tenant)
 
 
-asdids = ["geic_gwa_8_BE536B009317"]
+asdids = ["geic_gwa_pablo0_5GH6S1E-ai_pedestriantraffic-1-0_ACA963FEAE30"]
 
 devices = [AirSyncDevice(eapi=eapi, asdid=asdid) for asdid in asdids]
 

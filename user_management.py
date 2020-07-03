@@ -10,12 +10,14 @@ tenant = 1  # ["prox_admin", "prox2_admin", "prox3_admin"]
 eapi = EapiRequests.file('geic-qa3', tenant=tenant)
 
 
-user_technician = GEICUserFactory(roles=['Technician'])
-technician = user_technician.create(eapi=eapi)
+# user_technician = GEICUserFactory(roles=['Technician'])
+# technician = user_technician.create(eapi=eapi)
+# #
+# user_operator = GEICUserFactory(roles=['Operator'])
+# operator = user_operator.create(eapi=eapi)
+#
+# user_developer = GEICUserFactory(roles=['DeveloperL1'])
+# developer = user_developer.create(eapi=eapi)
 
-user_operator = GEICUserFactory(roles=['Operator'])
-operator = user_operator.create(eapi=eapi)
-
-user_developer = GEICUserFactory(roles=['DeveloperL1'])
-developer = user_developer.create(eapi=eapi)
-
+user_admin = GEICUserFactory(roles=['Administrator'], name='test_user', email='test@test.com')
+admin = user_admin.create(eapi=eapi)
