@@ -21,6 +21,5 @@ deepdiff
 tinydb
 interruptingcow
 interruptingboar
---index-url https://qa-poland:faYG5tyemfxLbTD3587OiOUrLwKoNr5E@pypi-psqa.relayr.io:443/simple/
 git+https://github.com/relayr/pdm-qa-libs.git@master#egg=qalibs
 git+https://github.com/relayr/pdm-qa-rpo.git@master#egg=rpo
